@@ -1,0 +1,35 @@
+project:
+  competition: birdclef-2026
+  run_name: baseline_alt_v1
+  seed: 2026
+
+paths:
+  data_root: /content/drive/MyDrive/birdclef-2026/data
+  output_root: /content/drive/MyDrive/birdclef-2026/outputs
+  folds_csv: /content/drive/MyDrive/birdclef-2026/outputs/reports/folds.csv
+  experiment_registry_csv: /content/drive/MyDrive/birdclef-2026/docs/trackers/experiment_registry.csv
+
+data:
+  taxonomy_csv: taxonomy.csv
+  train_soundscapes_dir: train_soundscapes
+
+features:
+  sample_rate: 32000
+  n_mels: 128
+  fft_size: 2048
+  hop_length: 512
+  window_seconds: 5
+
+training:
+  model_family: cnn_alt_family
+  device: auto
+  epochs: 5
+  batch_size: 24
+  learning_rate: 1.0e-4
+  folds: 5
+  num_workers: 2
+  max_rows: null
+
+reproducibility:
+  config_id: baseline_alt_colab_v1
+  checkpoint_id: baseline_alt_colab_v1_seed2026

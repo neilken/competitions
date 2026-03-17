@@ -1,0 +1,20 @@
+project:
+  competition: birdclef-2026
+  run_name: inference_cpu_submission_v1
+
+paths:
+  data_root: /content/drive/MyDrive/birdclef-2026/data
+  output_root: /content/drive/MyDrive/birdclef-2026/outputs/submissions
+  sample_submission_csv: /content/drive/MyDrive/birdclef-2026/data/sample_submission.csv
+  predictions_csv: /content/drive/MyDrive/birdclef-2026/outputs/submissions/predictions_candidate.csv
+  checkpoint_path: /content/drive/MyDrive/birdclef-2026/outputs/checkpoints/baseline_colab_v1_fold0.pt
+  soundscape_dir: /kaggle/input/birdclef-2026/test_soundscapes
+  submission_csv: /content/drive/MyDrive/birdclef-2026/outputs/submissions/submission.csv
+
+runtime:
+  cpu_runtime_budget_minutes: 90
+  internet_required: false
+
+validation:
+  require_probabilities_between_0_and_1: true
+  require_exact_schema_match: true

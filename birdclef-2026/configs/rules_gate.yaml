@@ -1,0 +1,22 @@
+competition:
+  one_account_confirmed: true
+  private_sharing_policy_confirmed: true
+  hidden_test_not_used_for_training: true
+  solo_mode_confirmed: true
+  submission_notebook_mode_confirmed: true
+
+submission:
+  expected_filename: submission.csv
+  sample_submission_path: /content/drive/MyDrive/birdclef-2026/data/sample_submission.csv
+  submission_path: /content/drive/MyDrive/birdclef-2026/outputs/submissions/submission.csv
+  max_runtime_minutes_cpu: 90
+  runtime_minutes_observed: null
+  cpu_only_confirmed: true
+  internet_disabled_confirmed: true
+
+external_resources:
+  tracker_csv: /content/drive/MyDrive/birdclef-2026/docs/trackers/external_resource_compliance_tracker.csv
+  require_all_rows_approved: true
+
+reporting:
+  fail_on_warning: false

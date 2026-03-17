@@ -1,0 +1,12 @@
+cv_policy:
+  n_splits: 5
+  seed: 2026
+  parser_regex: ".*_(S\\d{2})_(\\d{8})_\\d{6}\\.ogg$"
+  group_key_format: "{site}_{date}"
+  fallback_group_key: "filename"
+
+input:
+  labels_csv: /content/drive/MyDrive/birdclef-2026/data/train_soundscapes_labels.csv
+
+output:
+  folds_csv: /content/drive/MyDrive/birdclef-2026/outputs/reports/folds.csv

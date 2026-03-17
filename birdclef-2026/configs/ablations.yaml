@@ -1,0 +1,19 @@
+ablations:
+  - id: win5_mel128
+    overrides:
+      features.window_seconds: 5
+      features.n_mels: 128
+  - id: win5_mel96
+    overrides:
+      features.window_seconds: 5
+      features.n_mels: 96
+  - id: win10_mel128
+    overrides:
+      features.window_seconds: 10
+      features.n_mels: 128
+  - id: hop256
+    overrides:
+      features.hop_length: 256
+  - id: model_alt
+    overrides:
+      training.model_family: cnn_alt_family
