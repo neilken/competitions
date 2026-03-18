@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -43,12 +43,17 @@ def main() -> int:
     if probs.isna().any().any():
         print("[ERROR] Found NaN in probabilities.")
         return 1
-    finite_mask = probs.applymap(lambda x: isinstance(x, (int, float)) and math.isfinite(float(x)))
-    if not finite_mask.all().all():
-        print("[ERROR] Found non-numeric or non-finite probability values.")
+
+    numeric_probs = probs.apply(pd.to_numeric, errors="coerce")
+    if numeric_probs.isna().any().any():
+        print("[ERROR] Found non-numeric probability values.")
         return 1
-    min_val = float(probs.min().min())
-    max_val = float(probs.max().max())
+    if not np.isfinite(numeric_probs.to_numpy(dtype=np.float64)).all():
+        print("[ERROR] Found non-finite probability values.")
+        return 1
+
+    min_val = float(numeric_probs.min().min())
+    max_val = float(numeric_probs.max().max())
     if min_val < 0.0 or max_val > 1.0:
         print(f"[ERROR] Probability out of [0,1] range: min={min_val}, max={max_val}")
         return 1
