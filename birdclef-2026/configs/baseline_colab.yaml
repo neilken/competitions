@@ -23,11 +23,19 @@ features:
 training:
   model_family: cnn_logmel_baseline
   device: auto
+  use_amp: true
+  allow_tf32: true
+  cudnn_benchmark: true
   epochs: 5
   batch_size: 24
+  eval_batch_size: 48
   learning_rate: 1.0e-4
   folds: 5
   num_workers: 2
+  persistent_workers: true
+  prefetch_factor: 2
+  fail_on_error: false
+  cache_features: true
   max_rows: null
 
 reproducibility:

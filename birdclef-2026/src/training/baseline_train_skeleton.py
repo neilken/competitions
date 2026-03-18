@@ -71,6 +71,8 @@ def run_epoch(
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
     criterion: nn.Module,
+    use_amp: bool = False,
+    scaler: torch.amp.GradScaler | None = None,
 ) -> float:
     is_train = optimizer is not None
     model.train(is_train)
@@ -78,41 +80,63 @@ def run_epoch(
 
     # TQDM progress bars show batch-level movement for longer epochs.
     for batch in tqdm(loader, desc="train" if is_train else "valid", leave=False):
-        x = batch["x"].to(device)
-        y = batch["y"].to(device)
+        non_blocking = device.type == "cuda"
+        x = batch["x"].to(device, non_blocking=non_blocking)
+        y = batch["y"].to(device, non_blocking=non_blocking)
 
         with torch.set_grad_enabled(is_train):
-            logits = model(x)
-            loss = criterion(logits, y)
+            amp_dtype = torch.float16 if device.type == "cuda" else torch.bfloat16
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                logits = model(x)
+                loss = criterion(logits, y)
             if is_train:
                 optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+                if use_amp and scaler is not None:
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    optimizer.step()
         losses.append(float(loss.detach().cpu().item()))
 
     return float(np.mean(losses)) if losses else float("nan")
 
 
-@torch.no_grad()
-def predict_loader(model: nn.Module, loader: DataLoader, device: torch.device) -> tuple[np.ndarray, np.ndarray, List[str]]:
+@torch.inference_mode()
+def evaluate_loader(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    criterion: nn.Module,
+    use_amp: bool = False,
+) -> tuple[float, np.ndarray, np.ndarray, List[str]]:
     model.eval()
+    losses: List[float] = []
     all_true = []
     all_pred = []
     all_row_ids: List[str] = []
 
-    # Predict loop keeps its own progress bar so validation/inference progress is visible.
-    for batch in tqdm(loader, desc="predict", leave=False):
-        x = batch["x"].to(device)
+    # Validation/inference loop: compute loss and predictions in one pass for speed.
+    for batch in tqdm(loader, desc="eval", leave=False):
+        non_blocking = device.type == "cuda"
+        x = batch["x"].to(device, non_blocking=non_blocking)
         y = batch["y"].cpu().numpy()
-        logits = model(x)
+        y_device = batch["y"].to(device, non_blocking=non_blocking)
+        amp_dtype = torch.float16 if device.type == "cuda" else torch.bfloat16
+        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+            logits = model(x)
+            loss = criterion(logits, y_device)
         probs = torch.sigmoid(logits).cpu().numpy()
+        losses.append(float(loss.detach().cpu().item()))
         all_true.append(y)
         all_pred.append(probs)
         all_row_ids.extend(batch["row_id"])
 
     y_true = np.concatenate(all_true, axis=0) if all_true else np.zeros((0, 0), dtype=np.float32)
     y_pred = np.concatenate(all_pred, axis=0) if all_pred else np.zeros((0, 0), dtype=np.float32)
-    return y_true, y_pred, all_row_ids
+    mean_loss = float(np.mean(losses)) if losses else float("nan")
+    return mean_loss, y_true, y_pred, all_row_ids
 
 
 def main() -> int:
@@ -182,9 +206,27 @@ def main() -> int:
     n_folds = int(tr_cfg["folds"])
     epochs = int(tr_cfg["epochs"])
     batch_size = int(tr_cfg["batch_size"])
+    eval_batch_size = int(tr_cfg.get("eval_batch_size", batch_size))
     lr = float(tr_cfg["learning_rate"])
     requested_workers = int(tr_cfg.get("num_workers", 0))
     num_workers = resolve_num_workers(requested_workers)
+    prefetch_factor = int(tr_cfg.get("prefetch_factor", 2))
+    persistent_workers = bool(tr_cfg.get("persistent_workers", num_workers > 0))
+    fail_on_error = bool(tr_cfg.get("fail_on_error", False))
+    cache_features = bool(tr_cfg.get("cache_features", True))
+    cudnn_benchmark = bool(tr_cfg.get("cudnn_benchmark", True))
+    allow_tf32 = bool(tr_cfg.get("allow_tf32", True))
+    use_amp = bool(tr_cfg.get("use_amp", True))
+    if use_amp and device.type != "cuda":
+        print("[WARN] use_amp=True requested but CUDA is not active. Disabling AMP.")
+        use_amp = False
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    if device.type == "cuda":
+        # Fast-path settings for fixed-shape conv workloads in Colab GPU training.
+        torch.backends.cudnn.benchmark = cudnn_benchmark
+        torch.backends.cuda.matmul.allow_tf32 = allow_tf32
+        torch.backends.cudnn.allow_tf32 = allow_tf32
+        torch.set_float32_matmul_precision("high")
 
     sample_rate = int(feat_cfg["sample_rate"])
     clip_seconds = float(feat_cfg["window_seconds"])
@@ -194,7 +236,11 @@ def main() -> int:
 
     print("[INFO] training config summary:")
     print(f"  folds={n_folds}, epochs={epochs}, batch_size={batch_size}, lr={lr}")
+    print(f"  eval_batch_size={eval_batch_size}")
     print(f"  requested_num_workers={requested_workers}, resolved_num_workers={num_workers}")
+    print(f"  persistent_workers={persistent_workers}, prefetch_factor={prefetch_factor}")
+    print(f"  fail_on_error={fail_on_error}, cache_features={cache_features}, use_amp={use_amp}")
+    print(f"  cudnn_benchmark={cudnn_benchmark}, allow_tf32={allow_tf32}")
     print(f"  sample_rate={sample_rate}, clip_seconds={clip_seconds}, n_mels={n_mels}, n_fft={n_fft}, hop={hop_length}")
 
     oof_preds = []
@@ -223,6 +269,8 @@ def main() -> int:
             n_mels=n_mels,
             n_fft=n_fft,
             hop_length=hop_length,
+            fail_on_error=fail_on_error,
+            cache_features=cache_features,
         )
         valid_ds = SoundscapeSegmentDataset(
             frame=valid_df,
@@ -233,20 +281,28 @@ def main() -> int:
             n_mels=n_mels,
             n_fft=n_fft,
             hop_length=hop_length,
+            fail_on_error=fail_on_error,
+            cache_features=cache_features,
         )
+        loader_kwargs = {
+            "num_workers": num_workers,
+            "pin_memory": (device.type == "cuda"),
+        }
+        if num_workers > 0:
+            loader_kwargs["persistent_workers"] = persistent_workers
+            loader_kwargs["prefetch_factor"] = prefetch_factor
+
         train_loader = DataLoader(
             train_ds,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=num_workers,
-            pin_memory=(device.type == "cuda"),
+            **loader_kwargs,
         )
         valid_loader = DataLoader(
             valid_ds,
-            batch_size=batch_size,
+            batch_size=eval_batch_size,
             shuffle=False,
-            num_workers=num_workers,
-            pin_memory=(device.type == "cuda"),
+            **loader_kwargs,
         )
 
         model = create_model(str(tr_cfg["model_family"]), num_classes=len(classes)).to(device)
@@ -259,9 +315,22 @@ def main() -> int:
         best_state = None
         print(f"[INFO] Starting epochs for fold={fold}")
         for epoch in range(1, epochs + 1):
-            train_loss = run_epoch(model, train_loader, optimizer, device, criterion)
-            valid_loss = run_epoch(model, valid_loader, None, device, criterion)
-            y_true, y_pred, _ = predict_loader(model, valid_loader, device)
+            train_loss = run_epoch(
+                model,
+                train_loader,
+                optimizer,
+                device,
+                criterion,
+                use_amp=use_amp,
+                scaler=scaler,
+            )
+            valid_loss, y_true, y_pred, _ = evaluate_loader(
+                model,
+                valid_loader,
+                device,
+                criterion,
+                use_amp=use_amp,
+            )
             val_auc = macro_roc_auc_skip_empty(y_true, y_pred)
             print(
                 f"[FOLD {fold}] epoch={epoch}/{epochs} train_loss={train_loss:.4f} "
@@ -277,15 +346,16 @@ def main() -> int:
             best_auc = float("nan")
 
         model.load_state_dict(best_state)
-        y_true, y_pred, row_ids = predict_loader(model, valid_loader, device)
+        _, y_true, y_pred, row_ids = evaluate_loader(model, valid_loader, device, criterion, use_amp=use_amp)
         fold_auc = macro_roc_auc_skip_empty(y_true, y_pred)
         fold_scores.append((fold, fold_auc))
         print(f"[OK] Fold {fold} best macro AUC: {fold_auc:.6f}")
 
-        fold_oof = pd.DataFrame({"row_id": row_ids})
-        for idx, col in enumerate(classes):
-            fold_oof[col] = y_pred[:, idx]
-        fold_oof["fold"] = fold
+        # Build OOF frame in one shot to avoid DataFrame fragmentation from per-column inserts.
+        row_df = pd.DataFrame({"row_id": row_ids})
+        pred_df = pd.DataFrame(y_pred, columns=classes)
+        fold_df = pd.DataFrame({"fold": np.full(len(row_ids), fold, dtype=np.int16)})
+        fold_oof = pd.concat([row_df, pred_df, fold_df], axis=1)
         oof_preds.append(fold_oof)
 
         ckpt_path = ckpt_dir / f"{repro['config_id']}_fold{fold}.pt"

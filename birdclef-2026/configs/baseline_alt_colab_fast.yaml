@@ -1,6 +1,6 @@
 project:
   competition: birdclef-2026
-  run_name: baseline_alt_v1
+  run_name: baseline_alt_fast_v1
   seed: 2026
 
 paths:
@@ -26,18 +26,18 @@ training:
   use_amp: true
   allow_tf32: true
   cudnn_benchmark: true
-  epochs: 5
-  batch_size: 24
-  eval_batch_size: 48
+  epochs: 1
+  batch_size: 32
+  eval_batch_size: 64
   learning_rate: 1.0e-4
-  folds: 5
+  folds: 2
   num_workers: 2
   persistent_workers: true
   prefetch_factor: 2
   fail_on_error: false
   cache_features: true
-  max_rows: null
+  max_rows: 800
 
 reproducibility:
-  config_id: baseline_alt_colab_v1
-  checkpoint_id: baseline_alt_colab_v1_seed2026
+  config_id: baseline_alt_colab_fast_v1
+  checkpoint_id: baseline_alt_colab_fast_v1_seed2026

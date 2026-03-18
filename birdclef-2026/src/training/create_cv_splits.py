@@ -19,6 +19,34 @@ except ImportError as exc:  # pragma: no cover
     raise RuntimeError("scikit-learn is required. Install with: pip install scikit-learn") from exc
 
 
+def to_seconds(value: object) -> float:
+    text = str(value).strip()
+    if text == "":
+        raise ValueError("Empty time value cannot be converted to seconds.")
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    if ":" in text:
+        parts = text.split(":")
+        try:
+            if len(parts) == 3:
+                h = float(parts[0])
+                m = float(parts[1])
+                s = float(parts[2])
+                return h * 3600.0 + m * 60.0 + s
+            if len(parts) == 2:
+                m = float(parts[0])
+                s = float(parts[1])
+                return m * 60.0 + s
+        except ValueError:
+            pass
+    td = pd.to_timedelta(text, errors="coerce")
+    if pd.isna(td):
+        raise ValueError(f"Could not convert time value to seconds: {value!r}")
+    return float(td.total_seconds())
+
+
 def parse_site_and_date(filename: str, pattern: re.Pattern[str]) -> Tuple[str, str]:
     match = pattern.match(filename)
     if not match:
@@ -67,8 +95,11 @@ def main() -> int:
     if missing:
         raise ValueError(f"Missing required columns in labels CSV: {sorted(missing)}")
 
-    print("[STEP 3/6] Building row_id and group_id fields...")
+    print("[STEP 3/6] Normalizing time columns and building row_id/group_id...")
     df = df.copy()
+    tqdm.pandas(desc="time_to_seconds")
+    df["start"] = df["start"].progress_apply(to_seconds).astype(float)
+    df["end"] = df["end"].progress_apply(to_seconds).astype(float)
     df["row_id"] = (
         df["filename"].astype(str)
         + "_"
