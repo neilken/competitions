@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import List, Tuple
 
+import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
@@ -117,11 +118,15 @@ def check_submission_schema(cfg: dict) -> Tuple[List[str], List[str]]:
     probs = pred_df[prob_cols]
     if probs.isna().any().any():
         errors.append("Submission contains NaN probability values.")
-    if not probs.applymap(lambda x: isinstance(x, (int, float)) and math.isfinite(float(x))).all().all():
-        errors.append("Submission contains non-numeric or non-finite probability values.")
 
-    min_val = float(probs.min().min())
-    max_val = float(probs.max().max())
+    numeric_probs = probs.apply(pd.to_numeric, errors="coerce")
+    if numeric_probs.isna().any().any():
+        errors.append("Submission contains non-numeric probability values.")
+    elif not np.isfinite(numeric_probs.to_numpy(dtype=np.float64)).all():
+        errors.append("Submission contains non-finite probability values.")
+
+    min_val = float(numeric_probs.min().min())
+    max_val = float(numeric_probs.max().max())
     if min_val < 0.0 or max_val > 1.0:
         errors.append(f"Probabilities out of range [0, 1]. min={min_val:.6f}, max={max_val:.6f}")
 
@@ -152,8 +157,19 @@ def check_external_resources(cfg: dict) -> Tuple[List[str], List[str]]:
     require_all_approved = normalize_bool(ext.get("require_all_rows_approved", True))
 
     if not tracker_path.exists():
-        errors.append(f"External resource tracker not found: {tracker_path}")
-        return errors, warnings
+        # Fallback to tracker stored in repository docs when Drive mirror does not exist.
+        fallback_candidates = [
+            Path.cwd() / "docs" / "trackers" / "external_resource_compliance_tracker.csv",
+            Path(__file__).resolve().parents[2] / "docs" / "trackers" / "external_resource_compliance_tracker.csv",
+        ]
+        fallback_path = next((p for p in fallback_candidates if p.exists()), None)
+        if fallback_path is None:
+            errors.append(f"External resource tracker not found: {tracker_path}")
+            return errors, warnings
+        warnings.append(
+            f"External resource tracker not found at configured path; using fallback: {fallback_path}"
+        )
+        tracker_path = fallback_path
 
     tracker = pd.read_csv(tracker_path)
     missing_cols = [c for c in REQUIRED_TRACKER_COLUMNS if c not in tracker.columns]
